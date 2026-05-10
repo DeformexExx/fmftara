@@ -11,9 +11,10 @@ class Watchdog:
         self.thread = None
         self.tcp_failures = 0
         self.start_time = None
+        self.current_tcp = 0
         
     def get_uptime_str(self):
-        if not self.start_time or self.status != "RUNNING":
+        if not self.start_time or self.status == "IDLE":
             return "00:00:00"
         delta = int(time.time() - self.start_time)
         hours, rem = divmod(delta, 3600)
@@ -46,17 +47,25 @@ class Watchdog:
     def _loop(self):
         while self.running:
             try:
-                tcp_count = get_tcp_streams()
+                self.current_tcp = get_tcp_streams()
                 
-                # Logic: If TCP count < 4 for 3 consecutive checks (approx. 30s), trigger RESTART
-                if tcp_count < 4:
+                # Aegis MonitorEngine V12 Logic:
+                # CON >= 8: ACTIVE (Green)
+                # 4 <= CON <= 7: WARNING/STALE
+                # CON <= 3: ZOMBIE (Trigger Restart)
+                if self.current_tcp <= 3:
+                    self.status = "ZOMBIE"
                     self.tcp_failures += 1
-                    logger.warning(f"TCP Streams low: {tcp_count}. Failure count: {self.tcp_failures}/3")
+                    logger.warning(f"TCP Streams ZOMBIE: {self.current_tcp}. Failure: {self.tcp_failures}/3")
+                elif 4 <= self.current_tcp <= 7:
+                    self.status = "STALE"
+                    self.tcp_failures = 0
                 else:
+                    self.status = "ACTIVE"
                     self.tcp_failures = 0
                 
                 if self.tcp_failures >= 3:
-                    logger.error("Watchdog triggered restart! TCP streams < 4 for 3 checks.")
+                    logger.error(f"Watchdog Trigger: TCP {self.current_tcp} for 30s. Restarting...")
                     self.restart_sequence()
                     self.tcp_failures = 0
                 
@@ -66,16 +75,16 @@ class Watchdog:
                 time.sleep(10)
 
     def restart_sequence(self):
+        old_status = self.status
         self.status = "RESTARTING"
-        logger.info("Restart Sequence: Stopping Roblox...")
+        logger.info("Restart Sequence: pkill -> sleep 5 -> am start")
         stop_roblox()
         time.sleep(5)
         link = db.get_active_link()
         if link:
-            logger.info(f"Restart Sequence: Starting Roblox with active link...")
             start_roblox(link)
         else:
-            logger.warning("Restart Sequence: No active link found!")
+            logger.warning("Restart Sequence: No link found!")
         self.status = "RUNNING"
         self.start_time = time.time()
 
