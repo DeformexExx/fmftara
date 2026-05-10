@@ -55,7 +55,7 @@ def stop_roblox():
     code, out, err = run_root("am force-stop com.roblox.client")
     return code == 0
 
-def get_tcp_streams_data():
+def get_tcp_streams():
     global _tcp_cache
     now = time.time()
     # Cache TTL: 10s
@@ -92,6 +92,20 @@ def get_battery_level():
         except:
             return 0
     return 0
+
+def get_bypass_link() -> str:
+    """Fetch bypass link from activity recents."""
+    cmd = "dumpsys activity recents | grep -oE 'https://auth.platorelay.com/a\\?d=[^ ]+' | head -n 1"
+    code, out, _ = run_root(cmd)
+    return out.strip() if code == 0 else ""
+
+def update_license(key: str) -> bool:
+    """Write license key to Delta cache."""
+    # Ensure directory exists (Delta executor path)
+    run_root("mkdir -p /sdcard/Delta/Internals/Cache")
+    cmd = f"echo '{key}' > /sdcard/Delta/Internals/Cache/license"
+    code, out, _ = run_root(cmd)
+    return code == 0
 
 def check_internet():
     code, out, err = run_root("ping -c 1 8.8.8.8")

@@ -1,7 +1,7 @@
 import threading
 import time
 from loguru import logger
-from actions import get_tcp_streams_data, stop_roblox, start_roblox, is_roblox_running
+from actions import get_tcp_streams, stop_roblox, start_roblox, is_roblox_running
 from database import db
 
 class Watchdog:
@@ -52,7 +52,7 @@ class Watchdog:
                 continue
                 
             try:
-                self.current_tcp, self.tcp_status = get_tcp_streams_data()
+                self.current_tcp, self.tcp_status = get_tcp_streams()
                 is_running = is_roblox_running()
                 
                 # Aegis Engine Logic:

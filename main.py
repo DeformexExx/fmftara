@@ -8,7 +8,7 @@ import threading
 
 from config_loader import config
 from database import db
-from actions import get_ram_usage, check_internet, get_tcp_streams, take_screenshot, run_root, get_battery_level, extract_link_code
+from actions import get_ram_usage, check_internet, get_tcp_streams, take_screenshot, run_root, get_battery_level, extract_link_code, get_bypass_link, update_license
 from monitor import watchdog
 
 if not config.bot_token or config.bot_token == "YOUR_TOKEN":
@@ -65,6 +65,10 @@ def main_keyboard():
         types.InlineKeyboardButton("🛑 STOP", callback_data="ui:stop")
     )
     kb.add(
+        types.InlineKeyboardButton("🔗 GET BYPASS LINK", callback_data="ui:get_bypass"),
+        types.InlineKeyboardButton("🔑 UPDATE LICENSE", callback_data="ui:set_license")
+    )
+    kb.add(
         types.InlineKeyboardButton("📸 SCREEN", callback_data="ui:screen"),
         types.InlineKeyboardButton("🔗 SET SERVER", callback_data="ui:set_server")
     )
@@ -101,21 +105,34 @@ def cmd_exec(message):
     else:
         bot.reply_to(message, f"<code>{res}</code>")
 
-@bot.message_handler(func=lambda m: user_states.get(m.chat.id) == 'waiting_for_link')
-def handle_link_capture(message):
+@bot.message_handler(func=lambda m: user_states.get(m.chat.id) in ['waiting_for_link', 'waiting_for_license'])
+def handle_state_inputs(message):
     if message.from_user.id not in config.admin_ids: return
-    link = message.text.strip()
-    if link.startswith("http"):
-        link_code = extract_link_code(link)
-        db.add_link(link_code)
-        links = db.get_links()
-        db.set_active_link(links[-1][0])
-        user_states[message.chat.id] = None
-        bot.send_message(message.chat.id, f"✅ LinkCode captured: <code>{link_code}</code>")
-        cmd_start(message)
-    else:
-        bot.send_message(message.chat.id, "❌ Invalid link. Send a valid Roblox URL.")
-        user_states[message.chat.id] = None
+    state = user_states.get(message.chat.id)
+    text = message.text.strip()
+    
+    if state == 'waiting_for_link':
+        if text.startswith("http"):
+            link_code = extract_link_code(text)
+            db.add_link(link_code)
+            links = db.get_links()
+            db.set_active_link(links[-1][0])
+            user_states[message.chat.id] = None
+            bot.send_message(message.chat.id, f"✅ LinkCode captured: <code>{link_code}</code>")
+            cmd_start(message)
+        else:
+            bot.send_message(message.chat.id, "❌ Invalid link. Process cancelled.")
+            user_states[message.chat.id] = None
+
+    elif state == 'waiting_for_license':
+        if update_license(text):
+            user_states[message.chat.id] = None
+            kb = types.InlineKeyboardMarkup()
+            kb.add(types.InlineKeyboardButton("⚡ RESTART ROBLOX", callback_data="ui:restart_manual"))
+            bot.send_message(message.chat.id, "✅ <b>License updated successfully!</b>\nRestart Roblox to apply changes.", reply_markup=kb)
+        else:
+            bot.send_message(message.chat.id, "❌ Failed to update license file.")
+            user_states[message.chat.id] = None
 
 @bot.message_handler(commands=['update'])
 def cmd_update(message):
@@ -174,6 +191,24 @@ def handle_callbacks(call):
             bot.answer_callback_query(call.id)
             user_states[call.message.chat.id] = 'waiting_for_link'
             bot.send_message(call.message.chat.id, "🔗 Send me the new Roblox server link (Private or Game link):")
+
+        elif call.data == "ui:get_bypass":
+            bot.answer_callback_query(call.id)
+            url = get_bypass_link()
+            if url:
+                bot.send_message(call.message.chat.id, f"🔗 <b>Your Bypass Link:</b>\n<code>{url}</code>")
+            else:
+                bot.send_message(call.message.chat.id, "❌ Link not found in system recents.\nPlease click 'Get Key' in Roblox first.")
+
+        elif call.data == "ui:set_license":
+            bot.answer_callback_query(call.id)
+            user_states[call.message.chat.id] = 'waiting_for_license'
+            bot.send_message(call.message.chat.id, "📟 <b>System ready.</b>\nPlease send the new key (<code>FREE_...</code>):")
+
+        elif call.data == "ui:restart_manual":
+            bot.answer_callback_query(call.id, "Restarting Roblox...")
+            watchdog.restart_sequence()
+            update_ui()
             
         elif call.data == "ui:update":
             bot.answer_callback_query(call.id)
