@@ -6,7 +6,7 @@ import re
 from loguru import logger
 
 # TCP Cache
-_tcp_cache = {"count": 0, "time": 0}
+_tcp_cache = {"count": 0, "time": 0, "status": "IDLE"}
 ADOPT_ME_ID = "920587237"
 
 def run_root(command: str) -> tuple[int, str, str]:
@@ -25,6 +25,11 @@ def run_root(command: str) -> tuple[int, str, str]:
         logger.error(f"Root Shell Error: {e}")
         return -1, "", str(e)
 
+def is_roblox_running() -> bool:
+    """Check if roblox process exists."""
+    code, out, _ = run_root("pidof com.roblox.client")
+    return code == 0 and out.strip() != ""
+
 def extract_link_code(link: str) -> str:
     """Extract ONLY the value after privateServerLinkCode="""
     match = re.search(r"privateServerLinkCode=([\w-]+)", link)
@@ -37,7 +42,6 @@ def start_roblox(link_code):
         logger.error("No link_code provided to start_roblox")
         return False
     
-    # Golden Link Protocol
     formatted_link = f"roblox://placeID={ADOPT_ME_ID}&linkCode={link_code}"
     logger.info(f"Launching Adopt Me with Code: {link_code}")
     
@@ -47,24 +51,30 @@ def start_roblox(link_code):
     return code == 0
 
 def stop_roblox():
-    # Force kill
-    code, out, err = run_root("pkill -9 com.roblox.client")
+    # Fix: Use force-stop
+    code, out, err = run_root("am force-stop com.roblox.client")
     return code == 0
 
-def get_tcp_streams():
+def get_tcp_streams_data():
     global _tcp_cache
     now = time.time()
-    # Cache TTL: 15s
-    if now - _tcp_cache["time"] < 15:
-        return _tcp_cache["count"]
+    # Cache TTL: 10s
+    if now - _tcp_cache["time"] < 10:
+        return _tcp_cache["count"], _tcp_cache["status"]
     
-    # Requirement: su -c "cat /proc/net/tcp | wc -l"
     code, out, err = run_root("cat /proc/net/tcp | wc -l")
+    count = 0
     if code == 0 and out.isdigit():
-        _tcp_cache["count"] = int(out)
-        _tcp_cache["time"] = now
-        return _tcp_cache["count"]
-    return 0
+        count = int(out)
+    
+    status = "CRITICAL"
+    if count > 10: status = "EXCELLENT"
+    elif count >= 5: status = "STABLE"
+    
+    _tcp_cache["count"] = count
+    _tcp_cache["status"] = status
+    _tcp_cache["time"] = now
+    return count, status
 
 def get_ram_usage():
     """Return percent (float)."""

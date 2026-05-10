@@ -1,7 +1,7 @@
 import threading
 import time
 from loguru import logger
-from actions import get_tcp_streams, stop_roblox, start_roblox
+from actions import get_tcp_streams_data, stop_roblox, start_roblox, is_roblox_running
 from database import db
 
 class Watchdog:
@@ -12,6 +12,7 @@ class Watchdog:
         self.tcp_failures = 0
         self.start_time = None
         self.current_tcp = 0
+        self.tcp_status = "IDLE"
         
     def get_uptime_str(self):
         if not self.start_time or self.status == "IDLE":
@@ -22,70 +23,64 @@ class Watchdog:
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
     def start(self):
-        if not self.running:
-            self.running = True
-            self.status = "RUNNING"
+        self.running = True
+        self.status = "ACTIVE"
+        if not self.start_time:
             self.start_time = time.time()
-            self.tcp_failures = 0
+        self.tcp_failures = 0
+        
+        code = db.get_active_link()
+        if code:
+            start_roblox(code)
             
-            link = db.get_active_link()
-            if link:
-                start_roblox(link)
-                
+        if not self.thread or not self.thread.is_alive():
             self.thread = threading.Thread(target=self._loop, daemon=True)
             self.thread.start()
-            logger.info("Watchdog started.")
+        logger.info("Watchdog Engine initialized.")
 
     def stop(self):
-        if self.running:
-            self.running = False
-            self.status = "IDLE"
-            self.start_time = None
-            stop_roblox()
-            logger.info("Watchdog stopped.")
+        self.running = False
+        self.status = "STOPPED"
+        self.start_time = None
+        stop_roblox()
+        logger.info("Watchdog Engine halted.")
 
     def _loop(self):
-        while self.running:
-            try:
-                self.current_tcp = get_tcp_streams()
+        while True:
+            if not self.running:
+                time.sleep(5)
+                continue
                 
-                # Aegis MonitorEngine V12 Logic:
-                # CON >= 8: ACTIVE (Green)
-                # 4 <= CON <= 7: WARNING/STALE
-                # CON <= 3: ZOMBIE (Trigger Restart)
-                if self.current_tcp <= 3:
-                    self.status = "ZOMBIE"
+            try:
+                self.current_tcp, self.tcp_status = get_tcp_streams_data()
+                is_running = is_roblox_running()
+                
+                # Aegis Engine Logic:
+                # If running but TCP <= 3 -> ZOMBIE
+                if is_running and self.current_tcp <= 3:
                     self.tcp_failures += 1
-                    logger.warning(f"TCP Streams ZOMBIE: {self.current_tcp}. Failure: {self.tcp_failures}/3")
-                elif 4 <= self.current_tcp <= 7:
-                    self.status = "STALE"
-                    self.tcp_failures = 0
+                    logger.warning(f"⚠️ Watchdog: Connection lost (ZOMBIE state). Failure: {self.tcp_failures}/3")
                 else:
-                    self.status = "ACTIVE"
                     self.tcp_failures = 0
                 
                 if self.tcp_failures >= 3:
-                    logger.error(f"Watchdog Trigger: TCP {self.current_tcp} for 30s. Restarting...")
+                    logger.error("🛑 Aegis Engine: ZOMBIE detected. Executing Force Restart...")
                     self.restart_sequence()
                     self.tcp_failures = 0
                 
-                time.sleep(10)
+                time.sleep(15) # 15s cycle
             except Exception as e:
-                logger.error(f"Watchdog error: {e}")
-                time.sleep(10)
+                logger.error(f"Watchdog Loop Error: {e}")
+                time.sleep(15)
 
     def restart_sequence(self):
-        old_status = self.status
         self.status = "RESTARTING"
-        logger.info("Restart Sequence: pkill -> sleep 5 -> am start")
-        stop_roblox()
-        time.sleep(5)
-        link = db.get_active_link()
-        if link:
-            start_roblox(link)
-        else:
-            logger.warning("Restart Sequence: No link found!")
-        self.status = "RUNNING"
+        stop_roblox() # am force-stop
+        time.sleep(2)
+        code = db.get_active_link()
+        if code:
+            start_roblox(code)
+        self.status = "ACTIVE"
         self.start_time = time.time()
 
 watchdog = Watchdog()

@@ -34,7 +34,7 @@ def _bar(percent: float, length: int = 10) -> str:
 def get_dashboard_text():
     used_p = get_ram_usage()
     con_status = "STABLE" if check_internet() else "OFFLINE"
-    tcp_count = watchdog.current_tcp
+    tcp_count, tcp_status_text = watchdog.current_tcp, watchdog.tcp_status
     uptime = watchdog.get_uptime_str()
     battery = get_battery_level()
     status_text = watchdog.status
@@ -49,7 +49,7 @@ def get_dashboard_text():
         f"┃  🦾 VEX_FARM :: {config.device_name}\n"
         f"┣━━━━━━━━━━━━━━━━━━━━━━━━┫\n"
         f"┃ 🔋 RAM: [{_bar(used_p)}] {used_p:.0f}%\n"
-        f"┃ 🌐 NET: {con_status} (TCP: {tcp_count})\n"
+        f"┃ 🌐 NET: {con_status} ({tcp_status_text})\n"
         f"┃ 🕒 UP: {uptime} | ⚡ {battery}%\n"
         f"┣━━━━━━━━━━━━━━━━━━━━━━━━┫\n"
         f"┃ 🎮 STATUS: {status_text}\n"
@@ -132,6 +132,7 @@ cd ~/farm
 git fetch origin
 git reset --hard origin/main
 git clean -fd
+pip install psutil
 python main.py
 """
     with open("reboot_farm.sh", "w") as f:
@@ -150,12 +151,12 @@ def handle_callbacks(call):
 
     try:
         if call.data == "start_farm":
-            bot.answer_callback_query(call.id, "Starting Roblox...")
+            bot.answer_callback_query(call.id, "Starting Watchdog Engine...")
             watchdog.start()
             update_ui()
             
         elif call.data == "ui:stop":
-            bot.answer_callback_query(call.id, "Stopping Watchdog...")
+            bot.answer_callback_query(call.id, "Halting Watchdog Engine...")
             watchdog.stop()
             update_ui()
             
@@ -187,7 +188,12 @@ def update_ui():
         try:
             bot.edit_message_text(get_dashboard_text(), ui_chat_id, ui_message_id, reply_markup=main_keyboard())
         except Exception as e:
-            pass 
+            # If edit fails (message deleted), send a NEW one
+            try:
+                msg = bot.send_message(ui_chat_id, get_dashboard_text(), reply_markup=main_keyboard())
+                ui_message_id = msg.message_id
+            except:
+                pass 
 
 def auto_updater():
     while True:
@@ -196,6 +202,13 @@ def auto_updater():
 
 if __name__ == "__main__":
     logger.info("Farm Watchdog Bot Started.")
+    # Bulletproof: start daemon thread immediately
     ui_thread = threading.Thread(target=auto_updater, daemon=True)
     ui_thread.start()
+    
+    # Also ensure watchdog loop is running background
+    if not watchdog.thread or not watchdog.thread.is_alive():
+        watchdog.thread = threading.Thread(target=watchdog._loop, daemon=True)
+        watchdog.thread.start()
+
     bot.infinity_polling(timeout=60, long_polling_timeout=40)
