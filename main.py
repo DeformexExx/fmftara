@@ -11,10 +11,6 @@ from database import db
 from actions import get_ram_usage, check_internet, get_tcp_streams, take_screenshot, run_root, get_battery_level
 from monitor import watchdog
 
-if not config.bot_token or config.bot_token == "8374630962:AAHmShyXgwQhMVUhAxj1xuzl9ANw76VEJto":
-    # Using the token from config.json as fallback for check
-    pass 
-
 if not config.bot_token or config.bot_token == "YOUR_TOKEN":
     print("CRITICAL: BOT_TOKEN is missing in config.json! Please configure it before starting.")
     sys.exit(1)
@@ -42,7 +38,6 @@ def get_dashboard_text():
     battery = get_battery_level()
     status_text = watchdog.status
     
-    # Try to get server name/link
     active_link = db.get_active_link()
     srv_name = "NONE"
     if active_link:
@@ -71,7 +66,7 @@ def get_dashboard_text():
 def main_keyboard():
     kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
-        types.InlineKeyboardButton("⚡ START", callback_data="ui:start"),
+        types.InlineKeyboardButton("⚡ START", callback_data="start_farm"),
         types.InlineKeyboardButton("🛑 STOP", callback_data="ui:stop")
     )
     kb.add(
@@ -94,7 +89,7 @@ def cmd_exec(message):
     if message.from_user.id not in config.admin_ids: return
     cmd = message.text.replace("/exec", "", 1).strip()
     if not cmd:
-        bot.reply_to(message, "Usage: /exec <command>")
+        bot.reply_to(message, "Usage: /exec [command]")
         return
     
     code, out, err = run_root(cmd)
@@ -120,7 +115,7 @@ def cmd_add_server(message):
     if message.from_user.id not in config.admin_ids: return
     link = message.text.replace("/add_server", "", 1).strip()
     if not link:
-        bot.reply_to(message, "Usage: /add_server <roblox_link>")
+        bot.reply_to(message, "Usage: /add_server [roblox_link]")
         return
     
     if link.startswith("http"):
@@ -133,17 +128,25 @@ def cmd_add_server(message):
         bot.reply_to(message, "❌ Invalid link.")
 
 def update_system(chat_id):
-    bot.send_message(chat_id, "🔄 Updating from git...")
+    bot.send_message(chat_id, "🔄 Initiating Hard-Update Sequence...")
+    
     if config.git_repo_url:
         run_root(f"git remote set-url origin {config.git_repo_url}")
-    # Hard reset Git, pull
-    run_root("git fetch --all")
-    run_root("git reset --hard origin/main")
-    run_root("git pull")
     
-    bot.send_message(chat_id, "✅ Update complete. Restarting bot...")
-    logger.info("Bot is restarting for update.")
-    # os.execv to restart bot
+    # 1. git fetch origin
+    run_root("git fetch origin")
+    # 2. git reset --hard origin/main
+    run_root("git reset --hard origin/main")
+    # 3. git clean -fd
+    run_root("git clean -fd")
+    # 4. pip install (try-except)
+    try:
+        run_root("pip install -r requirements.txt")
+    except Exception as e:
+        logger.error(f"Pip error: {e}")
+
+    bot.send_message(chat_id, "📟 Update successful. Re-spawning process...")
+    logger.info("Bot is restarting for hard-update.")
     os.execv(sys.executable, ['python'] + sys.argv)
 
 @bot.callback_query_handler(func=lambda call: True)
@@ -154,8 +157,8 @@ def handle_callbacks(call):
         return
 
     try:
-        if call.data == "ui:start":
-            bot.answer_callback_query(call.id, "Starting Watchdog...")
+        if call.data == "start_farm":
+            bot.answer_callback_query(call.id, "Starting Roblox...")
             watchdog.start()
             update_ui()
             
@@ -187,7 +190,7 @@ def update_ui():
         try:
             bot.edit_message_text(get_dashboard_text(), ui_chat_id, ui_message_id, reply_markup=main_keyboard())
         except Exception as e:
-            pass # Ignore unchanged message error
+            pass 
 
 def auto_updater():
     while True:
@@ -196,8 +199,6 @@ def auto_updater():
 
 if __name__ == "__main__":
     logger.info("Farm Watchdog Bot Started.")
-    # Background thread to update UI every 10s
     ui_thread = threading.Thread(target=auto_updater, daemon=True)
     ui_thread.start()
-    
     bot.infinity_polling(timeout=60, long_polling_timeout=40)
