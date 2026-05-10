@@ -7,6 +7,7 @@ from loguru import logger
 
 # TCP Cache
 _tcp_cache = {"count": 0, "time": 0}
+ADOPT_ME_ID = "920587237"
 
 def run_root(command: str) -> tuple[int, str, str]:
     """Execute command via su -c"""
@@ -24,20 +25,24 @@ def run_root(command: str) -> tuple[int, str, str]:
         logger.error(f"Root Shell Error: {e}")
         return -1, "", str(e)
 
-def start_roblox(link):
-    if not link:
-        logger.error("No link provided to start_roblox")
+def extract_link_code(link: str) -> str:
+    """Extract ONLY the value after privateServerLinkCode="""
+    match = re.search(r"privateServerLinkCode=([\w-]+)", link)
+    if match:
+        return match.group(1)
+    return link # Return as is if no code found
+
+def start_roblox(link_code):
+    if not link_code:
+        logger.error("No link_code provided to start_roblox")
         return False
     
-    # Requirement: Parse to ensure it's a private server or game link
-    if "privateServerLinkCode" not in link and "/games/" not in link:
-        logger.warning("Link might be invalid for direct launch.")
-
-    # Nuclear Launch Command with nohup for stability
-    # Command: su -c "nohup am start -n com.roblox.client/.startup.ActivitySplash -a android.intent.action.VIEW -d '{link}' &"
-    cmd = f"nohup am start -n com.roblox.client/.startup.ActivitySplash -a android.intent.action.VIEW -d '{link}' > /dev/null 2>&1 &"
-    logger.info(f"Launching Roblox with nohup Intent: {cmd}")
+    # Golden Link Protocol
+    formatted_link = f"roblox://placeID={ADOPT_ME_ID}&linkCode={link_code}"
+    logger.info(f"Launching Adopt Me with Code: {link_code}")
     
+    # Execute intent
+    cmd = f"am start -a android.intent.action.VIEW -d '{formatted_link}' com.roblox.client"
     code, out, err = run_root(cmd)
     return code == 0
 
@@ -53,24 +58,21 @@ def get_tcp_streams():
     if now - _tcp_cache["time"] < 15:
         return _tcp_cache["count"]
     
-    code, out, err = run_root("netstat -ntp | grep com.roblox.client | wc -l")
+    # Requirement: su -c "cat /proc/net/tcp | wc -l"
+    code, out, err = run_root("cat /proc/net/tcp | wc -l")
     if code == 0 and out.isdigit():
         _tcp_cache["count"] = int(out)
         _tcp_cache["time"] = now
         return _tcp_cache["count"]
     return 0
 
-def get_ram_usage_display():
-    """Return percent (float) or string for display."""
+def get_ram_usage():
+    """Return percent (float)."""
     try:
         import psutil
-        mem = psutil.virtual_memory()
-        # Check for exabyte bug (e.g. total > 1TB)
-        if mem.total > 1024 * 1024 * 1024 * 1024:
-            return "Shared/System"
-        return mem.percent
+        return psutil.virtual_memory().percent
     except:
-        return "Shared/System"
+        return 0.0
 
 def get_battery_level():
     code, out, _ = run_root("dumpsys battery | grep level")

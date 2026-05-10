@@ -8,7 +8,7 @@ import threading
 
 from config_loader import config
 from database import db
-from actions import get_ram_usage_display, check_internet, get_tcp_streams, take_screenshot, run_root, get_battery_level
+from actions import get_ram_usage, check_internet, get_tcp_streams, take_screenshot, run_root, get_battery_level, extract_link_code
 from monitor import watchdog
 
 if not config.bot_token or config.bot_token == "YOUR_TOKEN":
@@ -29,42 +29,31 @@ user_states = {} # chat_id -> state
 def _bar(percent: float, length: int = 10) -> str:
     p = max(0.0, min(100.0, percent))
     fill = int((p / 100.0) * length)
-    return "■" * fill + "□" * (length - fill)
+    return "|" * fill + "-" * (length - fill)
 
 def get_dashboard_text():
-    ram_val = get_ram_usage_display()
-    if isinstance(ram_val, (int, float)):
-        ram_display = f"[{_bar(float(ram_val))}] {ram_val:.0f}%"
-    else:
-        ram_display = f"[{ram_val}]"
-
+    used_p = get_ram_usage()
     con_status = "STABLE" if check_internet() else "OFFLINE"
     tcp_count = watchdog.current_tcp
     uptime = watchdog.get_uptime_str()
     battery = get_battery_level()
     status_text = watchdog.status
     
-    active_link = db.get_active_link()
-    srv_name = "NONE"
-    if active_link:
-        if "placeId=" in active_link:
-            try:
-                srv_name = active_link.split("placeId=")[1].split("&")[0]
-            except:
-                srv_name = "ROBLOX"
-        else:
-            srv_name = "ACTIVE_LINK"
+    active_code = db.get_active_link()
+    srv_display = active_code if active_code else "NONE"
+    if len(srv_display) > 15:
+        srv_display = srv_display[:12] + "..."
 
     text = (
         f"<code>┏━━━━━━━━━━━━━━━━━━━━━━━━┓\n"
         f"┃  🦾 VEX_FARM :: {config.device_name}\n"
         f"┣━━━━━━━━━━━━━━━━━━━━━━━━┫\n"
-        f"┃ 🔋 RAM: {ram_display}\n"
+        f"┃ 🔋 RAM: [{_bar(used_p)}] {used_p:.0f}%\n"
         f"┃ 🌐 NET: {con_status} (TCP: {tcp_count})\n"
         f"┃ 🕒 UP: {uptime} | ⚡ {battery}%\n"
         f"┣━━━━━━━━━━━━━━━━━━━━━━━━┫\n"
         f"┃ 🎮 STATUS: {status_text}\n"
-        f"┃ 📍 SRV: {srv_name}\n"
+        f"┃ 📍 SRV: {srv_display}\n"
         f"┗━━━━━━━━━━━━━━━━━━━━━━━━┛</code>"
     )
     return text
@@ -117,17 +106,15 @@ def handle_link_capture(message):
     if message.from_user.id not in config.admin_ids: return
     link = message.text.strip()
     if link.startswith("http"):
-        if "privateServerLinkCode" not in link:
-            bot.send_message(message.chat.id, "⚠️ <b>Warning:</b> This link missing <code>privateServerLinkCode</code>. It might only open the Game Home page.")
-        
-        db.add_link(link)
+        link_code = extract_link_code(link)
+        db.add_link(link_code)
         links = db.get_links()
         db.set_active_link(links[-1][0])
         user_states[message.chat.id] = None
-        bot.send_message(message.chat.id, "✅ Server link updated!")
+        bot.send_message(message.chat.id, f"✅ LinkCode captured: <code>{link_code}</code>")
         cmd_start(message)
     else:
-        bot.send_message(message.chat.id, "❌ Invalid link. Process cancelled.")
+        bot.send_message(message.chat.id, "❌ Invalid link. Send a valid Roblox URL.")
         user_states[message.chat.id] = None
 
 @bot.message_handler(commands=['update'])
@@ -136,10 +123,10 @@ def cmd_update(message):
     update_system(message.chat.id)
 
 def update_system(chat_id):
-    bot.send_message(chat_id, "📟 <b>SYSTEM:</b> Nuclear update initiated...")
+    bot.send_message(chat_id, "📟 <b>SYSTEM:</b> Executing Nuclear Update. Cleaning environment...")
     
-    script_content = f"""#!/bin/bash
-sleep 2
+    script_content = f"""#!/system/bin/sh
+sleep 3
 pkill -9 python
 cd ~/farm
 git fetch origin
@@ -147,11 +134,11 @@ git reset --hard origin/main
 git clean -fd
 python main.py
 """
-    with open("updater.sh", "w") as f:
+    with open("reboot_farm.sh", "w") as f:
         f.write(script_content)
     
-    os.chmod("updater.sh", 0o755)
-    subprocess.Popen(["/bin/bash", "./updater.sh"], start_new_session=True)
+    os.chmod("reboot_farm.sh", 0o755)
+    subprocess.Popen(['sh', 'reboot_farm.sh'], start_new_session=True)
     sys.exit()
 
 @bot.callback_query_handler(func=lambda call: True)
