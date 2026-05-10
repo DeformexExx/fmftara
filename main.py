@@ -117,6 +117,9 @@ def handle_link_capture(message):
     if message.from_user.id not in config.admin_ids: return
     link = message.text.strip()
     if link.startswith("http"):
+        if "privateServerLinkCode" not in link:
+            bot.send_message(message.chat.id, "⚠️ <b>Warning:</b> This link missing <code>privateServerLinkCode</code>. It might only open the Game Home page.")
+        
         db.add_link(link)
         links = db.get_links()
         db.set_active_link(links[-1][0])
@@ -133,22 +136,22 @@ def cmd_update(message):
     update_system(message.chat.id)
 
 def update_system(chat_id):
-    bot.send_message(chat_id, "📟 Initiating Nuclear Update...")
+    bot.send_message(chat_id, "📟 <b>SYSTEM:</b> Nuclear update initiated...")
     
     script_content = f"""#!/bin/bash
 sleep 2
 pkill -9 python
-cd "{os.getcwd()}"
+cd ~/farm
 git fetch origin
 git reset --hard origin/main
 git clean -fd
 python main.py
 """
-    with open("update.sh", "w") as f:
+    with open("updater.sh", "w") as f:
         f.write(script_content)
     
-    os.chmod("update.sh", 0o755)
-    subprocess.Popen(["/bin/bash", "./update.sh"], start_new_session=True)
+    os.chmod("updater.sh", 0o755)
+    subprocess.Popen(["/bin/bash", "./updater.sh"], start_new_session=True)
     sys.exit()
 
 @bot.callback_query_handler(func=lambda call: True)

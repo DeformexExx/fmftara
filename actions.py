@@ -29,17 +29,20 @@ def start_roblox(link):
         logger.error("No link provided to start_roblox")
         return False
     
-    # Nuclear Launch Command (Fixed Activity)
-    # Template: su -c "am start -n com.roblox.client/.startup.ActivitySplash -a android.intent.action.VIEW -d '{link}'"
-    # Wrapping link in single quotes to handle & and other shell-sensitive chars
-    cmd = f"am start -n com.roblox.client/.startup.ActivitySplash -a android.intent.action.VIEW -d '{link}'"
-    logger.info(f"Launching Roblox with Nuclear Intent: {cmd}")
+    # Requirement: Parse to ensure it's a private server or game link
+    if "privateServerLinkCode" not in link and "/games/" not in link:
+        logger.warning("Link might be invalid for direct launch.")
+
+    # Nuclear Launch Command with nohup for stability
+    # Command: su -c "nohup am start -n com.roblox.client/.startup.ActivitySplash -a android.intent.action.VIEW -d '{link}' &"
+    cmd = f"nohup am start -n com.roblox.client/.startup.ActivitySplash -a android.intent.action.VIEW -d '{link}' > /dev/null 2>&1 &"
+    logger.info(f"Launching Roblox with nohup Intent: {cmd}")
     
     code, out, err = run_root(cmd)
     return code == 0
 
 def stop_roblox():
-    # Kill using pkill
+    # Force kill
     code, out, err = run_root("pkill -9 com.roblox.client")
     return code == 0
 
