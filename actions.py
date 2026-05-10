@@ -2,6 +2,7 @@ import subprocess
 import shlex
 import os
 import time
+import re
 from loguru import logger
 
 # TCP Cache
@@ -23,12 +24,38 @@ def run_root(command: str) -> tuple[int, str, str]:
         logger.error(f"Root Shell Error: {e}")
         return -1, "", str(e)
 
+def format_roblox_link(link: str) -> str:
+    """Parse standard Roblox link into roblox:// URI scheme."""
+    try:
+        # Extract placeId
+        place_id_match = re.search(r"games/(\d+)", link)
+        if not place_id_match:
+            return link # Fallback to original if no ID found
+        
+        place_id = place_id_match.group(1)
+        
+        # Extract linkCode if present (Private Servers)
+        link_code_match = re.search(r"privateServerLinkCode=([\w-]+)", link)
+        if link_code_match:
+            link_code = link_code_match.group(1)
+            return f"roblox://placeID={place_id}&linkCode={link_code}"
+        
+        # Regular game launch
+        return f"roblox://placeID={place_id}"
+    except Exception as e:
+        logger.error(f"Link Parse Error: {e}")
+        return link
+
 def start_roblox(link):
     if not link:
         logger.error("No link provided to start_roblox")
         return False
-    # Use direct intent for com.roblox.client
-    code, out, err = run_root(f"am start -a android.intent.action.VIEW -d '{link}' com.roblox.client")
+    
+    formatted_link = format_roblox_link(link)
+    logger.info(f"Launching Roblox with URI: {formatted_link}")
+    
+    # Execute intent
+    code, out, err = run_root(f"am start -a android.intent.action.VIEW -d '{formatted_link}' com.roblox.client")
     return code == 0
 
 def stop_roblox():

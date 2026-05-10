@@ -21,9 +21,10 @@ LOG_FILE = "farm_log.txt"
 # Setup Logger
 logger.add(LOG_FILE, rotation="10 MB", retention="3 days", level="INFO")
 
-# Global UI Message ID
+# Global UI State
 ui_message_id = None
 ui_chat_id = None
+user_states = {} # chat_id -> state
 
 def _bar(percent: float, length: int = 10) -> str:
     p = max(0.0, min(100.0, percent))
@@ -71,8 +72,9 @@ def main_keyboard():
     )
     kb.add(
         types.InlineKeyboardButton("📸 SCREEN", callback_data="ui:screen"),
-        types.InlineKeyboardButton("🔄 UPDATE", callback_data="ui:update")
+        types.InlineKeyboardButton("🔗 SET SERVER", callback_data="ui:set_server")
     )
+    kb.add(types.InlineKeyboardButton("🔄 UPDATE", callback_data="ui:update"))
     return kb
 
 @bot.message_handler(commands=['start', 'menu'])
@@ -105,33 +107,29 @@ def cmd_exec(message):
     else:
         bot.reply_to(message, f"<code>{res}</code>")
 
+@bot.message_handler(func=lambda m: user_states.get(m.chat.id) == 'waiting_for_link')
+def handle_link_capture(message):
+    if message.from_user.id not in config.admin_ids: return
+    link = message.text.strip()
+    if link.startswith("http"):
+        db.add_link(link)
+        links = db.get_links()
+        # Set as active
+        db.set_active_link(links[-1][0])
+        user_states[message.chat.id] = None
+        bot.send_message(message.chat.id, "✅ Server link updated!")
+        cmd_start(message)
+    else:
+        bot.send_message(message.chat.id, "❌ Invalid link. Process cancelled.")
+        user_states[message.chat.id] = None
+
 @bot.message_handler(commands=['update'])
 def cmd_update(message):
     if message.from_user.id not in config.admin_ids: return
     update_system(message.chat.id)
 
-@bot.message_handler(commands=['add_server'])
-def cmd_add_server(message):
-    if message.from_user.id not in config.admin_ids: return
-    link = message.text.replace("/add_server", "", 1).strip()
-    if not link:
-        bot.reply_to(message, "Usage: /add_server [roblox_link]")
-        return
-    
-    if link.startswith("http"):
-        db.add_link(link)
-        links = db.get_links()
-        if len(links) == 1:
-            db.set_active_link(links[0][0])
-        bot.reply_to(message, "✅ Server added and saved to SQLite.")
-    else:
-        bot.reply_to(message, "❌ Invalid link.")
-
 def update_system(chat_id):
     bot.send_message(chat_id, "🔄 Initiating Hard-Update Sequence...")
-    
-    if config.git_repo_url:
-        run_root(f"git remote set-url origin {config.git_repo_url}")
     
     # 1. git fetch origin
     run_root("git fetch origin")
@@ -139,19 +137,14 @@ def update_system(chat_id):
     run_root("git reset --hard origin/main")
     # 3. git clean -fd
     run_root("git clean -fd")
-    # 4. pip install (try-except)
-    try:
-        run_root("pip install -r requirements.txt")
-    except Exception as e:
-        logger.error(f"Pip error: {e}")
-
+    
     bot.send_message(chat_id, "📟 Update successful. Re-spawning process...")
     logger.info("Bot is restarting for hard-update.")
     os.execv(sys.executable, ['python'] + sys.argv)
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callbacks(call):
-    global ui_message_id, ui_chat_id
+    global ui_message_id, ui_chat_id, user_states
     if call.from_user.id not in config.admin_ids:
         bot.answer_callback_query(call.id, "Unauthorized")
         return
@@ -177,6 +170,11 @@ def handle_callbacks(call):
             else:
                 bot.send_message(call.message.chat.id, "❌ Failed to take screenshot.")
                 
+        elif call.data == "ui:set_server":
+            bot.answer_callback_query(call.id)
+            user_states[call.message.chat.id] = 'waiting_for_link'
+            bot.send_message(call.message.chat.id, "🔗 Send me the new Roblox server link (Private or Game link):")
+            
         elif call.data == "ui:update":
             bot.answer_callback_query(call.id)
             update_system(call.message.chat.id)
