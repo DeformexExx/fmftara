@@ -8,7 +8,7 @@ import threading
 
 from config_loader import config
 from database import db
-from actions import get_ram_usage, check_internet, get_tcp_streams, take_screenshot, run_root, get_battery_level
+from actions import get_ram_usage_display, check_internet, get_tcp_streams, take_screenshot, run_root, get_battery_level
 from monitor import watchdog
 
 if not config.bot_token or config.bot_token == "YOUR_TOKEN":
@@ -32,7 +32,12 @@ def _bar(percent: float, length: int = 10) -> str:
     return "■" * fill + "□" * (length - fill)
 
 def get_dashboard_text():
-    used_p = get_ram_usage()
+    ram_val = get_ram_usage_display()
+    if isinstance(ram_val, (int, float)):
+        ram_display = f"[{_bar(float(ram_val))}] {ram_val:.0f}%"
+    else:
+        ram_display = f"[{ram_val}]"
+
     con_status = "STABLE" if check_internet() else "OFFLINE"
     tcp_count = watchdog.current_tcp
     uptime = watchdog.get_uptime_str()
@@ -54,7 +59,7 @@ def get_dashboard_text():
         f"<code>┏━━━━━━━━━━━━━━━━━━━━━━━━┓\n"
         f"┃  🦾 VEX_FARM :: {config.device_name}\n"
         f"┣━━━━━━━━━━━━━━━━━━━━━━━━┫\n"
-        f"┃ 🔋 RAM: [{_bar(used_p)}] {used_p:.0f}%\n"
+        f"┃ 🔋 RAM: {ram_display}\n"
         f"┃ 🌐 NET: {con_status} (TCP: {tcp_count})\n"
         f"┃ 🕒 UP: {uptime} | ⚡ {battery}%\n"
         f"┣━━━━━━━━━━━━━━━━━━━━━━━━┫\n"
@@ -114,7 +119,6 @@ def handle_link_capture(message):
     if link.startswith("http"):
         db.add_link(link)
         links = db.get_links()
-        # Set as active
         db.set_active_link(links[-1][0])
         user_states[message.chat.id] = None
         bot.send_message(message.chat.id, "✅ Server link updated!")
@@ -129,18 +133,23 @@ def cmd_update(message):
     update_system(message.chat.id)
 
 def update_system(chat_id):
-    bot.send_message(chat_id, "🔄 Initiating Hard-Update Sequence...")
+    bot.send_message(chat_id, "📟 Initiating Nuclear Update...")
     
-    # 1. git fetch origin
-    run_root("git fetch origin")
-    # 2. git reset --hard origin/main
-    run_root("git reset --hard origin/main")
-    # 3. git clean -fd
-    run_root("git clean -fd")
+    script_content = f"""#!/bin/bash
+sleep 2
+pkill -9 python
+cd "{os.getcwd()}"
+git fetch origin
+git reset --hard origin/main
+git clean -fd
+python main.py
+"""
+    with open("update.sh", "w") as f:
+        f.write(script_content)
     
-    bot.send_message(chat_id, "📟 Update successful. Re-spawning process...")
-    logger.info("Bot is restarting for hard-update.")
-    os.execv(sys.executable, ['python'] + sys.argv)
+    os.chmod("update.sh", 0o755)
+    subprocess.Popen(["/bin/bash", "./update.sh"], start_new_session=True)
+    sys.exit()
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callbacks(call):

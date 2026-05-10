@@ -24,43 +24,23 @@ def run_root(command: str) -> tuple[int, str, str]:
         logger.error(f"Root Shell Error: {e}")
         return -1, "", str(e)
 
-def format_roblox_link(link: str) -> str:
-    """Parse standard Roblox link into roblox:// URI scheme."""
-    try:
-        # Extract placeId
-        place_id_match = re.search(r"games/(\d+)", link)
-        if not place_id_match:
-            return link # Fallback to original if no ID found
-        
-        place_id = place_id_match.group(1)
-        
-        # Extract linkCode if present (Private Servers)
-        link_code_match = re.search(r"privateServerLinkCode=([\w-]+)", link)
-        if link_code_match:
-            link_code = link_code_match.group(1)
-            return f"roblox://placeID={place_id}&linkCode={link_code}"
-        
-        # Regular game launch
-        return f"roblox://placeID={place_id}"
-    except Exception as e:
-        logger.error(f"Link Parse Error: {e}")
-        return link
-
 def start_roblox(link):
     if not link:
         logger.error("No link provided to start_roblox")
         return False
     
-    formatted_link = format_roblox_link(link)
-    logger.info(f"Launching Roblox with URI: {formatted_link}")
+    # Nuclear Launch Command (Fixed Activity)
+    # Template: su -c "am start -n com.roblox.client/.startup.ActivitySplash -a android.intent.action.VIEW -d '{link}'"
+    # Wrapping link in single quotes to handle & and other shell-sensitive chars
+    cmd = f"am start -n com.roblox.client/.startup.ActivitySplash -a android.intent.action.VIEW -d '{link}'"
+    logger.info(f"Launching Roblox with Nuclear Intent: {cmd}")
     
-    # Execute intent
-    code, out, err = run_root(f"am start -a android.intent.action.VIEW -d '{formatted_link}' com.roblox.client")
+    code, out, err = run_root(cmd)
     return code == 0
 
 def stop_roblox():
     # Kill using pkill
-    code, out, err = run_root("pkill com.roblox.client")
+    code, out, err = run_root("pkill -9 com.roblox.client")
     return code == 0
 
 def get_tcp_streams():
@@ -77,23 +57,17 @@ def get_tcp_streams():
         return _tcp_cache["count"]
     return 0
 
-def get_ram_usage():
+def get_ram_usage_display():
+    """Return percent (float) or string for display."""
     try:
         import psutil
-        return psutil.virtual_memory().percent
-    except ImportError:
-        # Fallback for abnormal meminfo: assume 4GB total
-        code, out, _ = run_root("cat /proc/meminfo")
-        if code == 0:
-            free_kb = 0
-            for line in out.splitlines():
-                if line.startswith("MemAvailable:") or line.startswith("MemFree:"): 
-                    free_kb = int(line.split()[1])
-                    break
-            total_kb = 4 * 1024 * 1024
-            used_kb = total_kb - free_kb
-            return (used_kb / total_kb) * 100
-        return 0.0
+        mem = psutil.virtual_memory()
+        # Check for exabyte bug (e.g. total > 1TB)
+        if mem.total > 1024 * 1024 * 1024 * 1024:
+            return "Shared/System"
+        return mem.percent
+    except:
+        return "Shared/System"
 
 def get_battery_level():
     code, out, _ = run_root("dumpsys battery | grep level")
@@ -111,11 +85,9 @@ def check_internet():
 def take_screenshot():
     tmp_path = "/data/local/tmp/s.png"
     local_path = "screen.png"
-    # Execute as: su -c "screencap -p /data/local/tmp/s.png && chmod 777 /data/local/tmp/s.png"
     cmd = f"screencap -p {tmp_path} && chmod 777 {tmp_path}"
     code, out, err = run_root(cmd)
     if code == 0:
-        # Copy to local dir to ensure accessibility
         run_root(f"cp {tmp_path} {os.getcwd()}/{local_path}")
         run_root(f"rm {tmp_path}")
         return local_path
