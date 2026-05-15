@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AEGIS V14.0</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background: #000; color: #e5ffe5; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .neon { text-shadow: 0 0 8px rgba(57,255,20,.8); }
+    .panel { border: 1px solid #39ff14; box-shadow: 0 0 12px rgba(57,255,20,.25); }
+    .terminal { background: #050505; border: 1px solid #1f7a1f; }
+    .btn { border: 1px solid #39ff14; }
+    .btn:hover { background: #0f230f; }
+  </style>
+</head>
+<body class="min-h-screen">
+  <header class="sticky top-0 z-20 bg-black/95 border-b border-green-500 p-3">
+    <div class="max-w-7xl mx-auto flex flex-col sm:flex-row items-start sm:items-center gap-3 justify-between">
+      <h1 class="text-xl md:text-2xl font-bold neon text-green-400">AEGIS // DIGITAL UNDERGROUND // V14.0</h1>
+      <div class="flex gap-2">
+        <button id="startAllBtn" class="btn px-4 py-2 text-green-300">START ALL</button>
+        <button id="stopAllBtn" class="btn px-4 py-2 text-white">STOP ALL</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto p-3 space-y-4">
+    <section class="panel p-3">
+      <div class="flex flex-wrap items-center gap-2">
+        <button class="btn px-3 py-1 text-green-300" data-tab="dashboard">Dashboard</button>
+        <button class="btn px-3 py-1 text-green-300" data-tab="testbench">Test Bench</button>
+      </div>
+    </section>
+
+    <section id="dashboardTab" class="space-y-4">
+      <div id="devicesGrid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"></div>
+    </section>
+
+    <section id="testbenchTab" class="hidden panel p-3 space-y-2">
+      <h2 class="text-green-400 font-bold">Cookie Check / Login Verification</h2>
+      <div class="flex flex-wrap gap-2">
+        <select id="tbDevice" class="bg-black border border-green-600 px-2 py-1"></select>
+        <button id="tbCookieCheck" class="btn px-3 py-1">Run Cookie Check</button>
+        <button id="tbLoginVerify" class="btn px-3 py-1">Run Login Verification</button>
+      </div>
+      <pre id="tbOutput" class="terminal p-3 h-56 overflow-auto text-xs whitespace-pre-wrap"></pre>
+    </section>
+  </main>
+
+  <script>
+    const state = { devices: [], consoleSockets: {}, dashboardSocket: null };
+
+    function el(tag, cls = "") { const x = document.createElement(tag); x.className = cls; return x; }
+
+    async function api(path, method = 'GET', body) {
+      const res = await fetch(path, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: body ? JSON.stringify(body) : undefined
+      });
+      return await res.json();
+    }
+
+    function statusDot(status) {
+      return status === 'online' ? '🟢' : '🔴';
+    }
+
+    async function loadDevices() {
+      const data = await api('/api/devices');
+      state.devices = data.items || [];
+      renderDevices();
+      renderTestbenchSelect();
+    }
+
+    function renderTestbenchSelect() {
+      const sel = document.getElementById('tbDevice');
+      sel.innerHTML = '';
+      for (const d of state.devices) {
+        const opt = el('option');
+        opt.value = d.id;
+        opt.textContent = `${d.name} (${d.id})`;
+        sel.appendChild(opt);
+      }
+    }
+
+    function openConsoleSocket(deviceId, box) {
+      if (state.consoleSockets[deviceId]) return;
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      const ws = new WebSocket(`${proto}://${location.host}/ws/console/${deviceId}`);
+      ws.onmessage = (ev) => {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === 'console') {
+          box.textContent += `[${msg.stream}] ${msg.line}\n`;
+          box.scrollTop = box.scrollHeight;
+        }
+      };
+      ws.onclose = () => { delete state.consoleSockets[deviceId]; };
+      state.consoleSockets[deviceId] = ws;
+    }
+
+    function makeCard(d) {
+      const card = el('div', 'panel p-3 space-y-2');
+      const title = el('div', 'flex justify-between items-center');
+      title.innerHTML = `<div><div class="text-green-400 font-bold">${d.name}</div><div class="text-xs text-gray-400">${d.id}</div></div><div class="text-xl">${statusDot(d.status)}</div>`;
+      card.appendChild(title);
+
+      const stats = el('div', 'text-sm grid grid-cols-2 gap-1');
+      stats.innerHTML = `<div>RAM: ${Number(d.ram || 0).toFixed(1)}%</div><div>TCP: ${d.tcp_count || 0}</div>`;
+      card.appendChild(stats);
+
+      const wdRow = el('div', 'flex items-center justify-between text-sm');
+      const wdLabel = el('span'); wdLabel.textContent = 'Watchdog';
+      const wdToggle = el('input'); wdToggle.type = 'checkbox'; wdToggle.checked = !!d.watchdog_enabled;
+      wdToggle.onchange = async () => { await api(`/api/device/${d.id}/watchdog?enabled=${wdToggle.checked}`, 'PUT'); };
+      wdRow.appendChild(wdLabel); wdRow.appendChild(wdToggle);
+      card.appendChild(wdRow);
+
+      const link = el('input', 'w-full bg-black border border-green-700 px-2 py-1 text-sm');
+      link.placeholder = 'roblox:// or private server link';
+      link.value = d.saved_link || '';
+      card.appendChild(link);
+
+      const cookie = el('textarea', 'w-full bg-black border border-green-700 px-2 py-1 text-xs');
+      cookie.placeholder = '.ROBLOSECURITY cookie (optional)';
+      cookie.value = d.last_cookie || '';
+      cookie.rows = 2;
+      card.appendChild(cookie);
+
+      const row1 = el('div', 'grid grid-cols-3 gap-2');
+      const saveBtn = el('button', 'btn py-1 text-xs'); saveBtn.textContent = 'SAVE';
+      saveBtn.onclick = async () => {
+        await api(`/api/device/${d.id}/link`, 'PUT', { link: link.value.trim() });
+        await api(`/api/device/${d.id}/cookie`, 'PUT', { cookie: cookie.value.trim() });
+      };
+      const startBtn = el('button', 'btn py-1 text-xs text-green-300'); startBtn.textContent = 'START';
+      startBtn.onclick = async () => { await api(`/api/device/${d.id}/start`, 'POST'); };
+      const stopBtn = el('button', 'btn py-1 text-xs'); stopBtn.textContent = 'STOP';
+      stopBtn.onclick = async () => { await api(`/api/device/${d.id}/stop`, 'POST'); };
+      row1.append(saveBtn, startBtn, stopBtn);
+      card.appendChild(row1);
+
+      const row2 = el('div', 'grid grid-cols-2 gap-2');
+      const readClip = el('button', 'btn py-1 text-xs'); readClip.textContent = 'READ CLIPBOARD';
+      readClip.onclick = async () => { await api(`/api/device/${d.id}/clipboard/read`, 'POST'); };
+      const capBtn = el('button', 'btn py-1 text-xs'); capBtn.textContent = 'CAPTURE';
+      capBtn.onclick = async () => { await api(`/api/device/${d.id}/screenshot`, 'POST'); };
+      row2.append(readClip, capBtn);
+      card.appendChild(row2);
+
+      const clipInput = el('input', 'w-full bg-black border border-green-700 px-2 py-1 text-xs');
+      clipInput.placeholder = 'WRITE TO CLIPBOARD';
+      const clipSend = el('button', 'btn py-1 text-xs mt-1'); clipSend.textContent = 'SEND CLIPBOARD';
+      clipSend.onclick = async () => { await api(`/api/device/${d.id}/clipboard/write`, 'POST', { text: clipInput.value }); };
+      card.append(clipInput, clipSend);
+
+      const screen = el('img', 'w-full border border-green-700');
+      if (d.screenshot_b64) screen.src = `data:image/png;base64,${d.screenshot_b64}`;
+      card.appendChild(screen);
+
+      const term = el('pre', 'terminal p-2 h-40 overflow-auto text-xs whitespace-pre-wrap');
+      card.appendChild(term);
+      openConsoleSocket(d.id, term);
+
+      const execWrap = el('div', 'flex gap-1');
+      const cmdInput = el('input', 'flex-1 bg-black border border-green-700 px-2 py-1 text-xs');
+      cmdInput.placeholder = 'su -c command';
+      const execBtn = el('button', 'btn px-2 text-xs'); execBtn.textContent = 'EXEC';
+      execBtn.onclick = async () => {
+        if (!cmdInput.value.trim()) return;
+        await api(`/api/device/${d.id}/console/exec`, 'POST', { cmd: cmdInput.value.trim() });
+        cmdInput.value = '';
+      };
+      execWrap.append(cmdInput, execBtn);
+      card.appendChild(execWrap);
+
+      if (d.clipboard_last_read) {
+        const clipRead = el('div', 'text-xs text-gray-300 break-all');
+        clipRead.textContent = `Clipboard: ${d.clipboard_last_read}`;
+        card.appendChild(clipRead);
+      }
+      return card;
+    }
+
+    function renderDevices() {
+      const grid = document.getElementById('devicesGrid');
+      grid.innerHTML = '';
+      for (const d of state.devices) grid.appendChild(makeCard(d));
+    }
+
+    function connectDashboardSocket() {
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      const ws = new WebSocket(`${proto}://${location.host}/ws/dashboard`);
+      ws.onmessage = (ev) => {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === 'devices') {
+          state.devices = msg.items || [];
+          renderDevices();
+          renderTestbenchSelect();
+        }
+        if (msg.type === 'screenshot') {
+          const i = state.devices.findIndex(x => x.id === msg.device_id);
+          if (i >= 0) {
+            state.devices[i].screenshot_b64 = msg.image_b64;
+            renderDevices();
+          }
+        }
+      };
+      ws.onclose = () => setTimeout(connectDashboardSocket, 1500);
+      state.dashboardSocket = ws;
+    }
+
+    document.querySelectorAll('[data-tab]').forEach(b => {
+      b.onclick = () => {
+        const name = b.getAttribute('data-tab');
+        document.getElementById('dashboardTab').classList.toggle('hidden', name !== 'dashboard');
+        document.getElementById('testbenchTab').classList.toggle('hidden', name !== 'testbench');
+      };
+    });
+
+    document.getElementById('startAllBtn').onclick = async () => { await api('/api/device/start_all', 'POST'); };
+    document.getElementById('stopAllBtn').onclick = async () => { await api('/api/device/stop_all', 'POST'); };
+
+    document.getElementById('tbCookieCheck').onclick = async () => {
+      const deviceId = document.getElementById('tbDevice').value;
+      await api(`/api/device/${deviceId}/console/exec`, 'POST', { cmd: "su -c 'ls -la /data/data/com.roblox.client/shared_prefs'" });
+      const out = document.getElementById('tbOutput');
+      out.textContent += `[cookie-check] dispatched for ${deviceId}\n`;
+    };
+
+    document.getElementById('tbLoginVerify').onclick = async () => {
+      const deviceId = document.getElementById('tbDevice').value;
+      await api(`/api/device/${deviceId}/console/exec`, 'POST', { cmd: "su -c 'dumpsys activity top | grep -i roblox'" });
+      const out = document.getElementById('tbOutput');
+      out.textContent += `[login-verification] dispatched for ${deviceId}\n`;
+    };
+
+    loadDevices();
+    connectDashboardSocket();
+  </script>
+</body>
+</html>
